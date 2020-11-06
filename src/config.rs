@@ -9,11 +9,13 @@ use serde::{
 use std::{
   error::Error,
   fmt, fs,
+  ops::Deref,
   path::{Path, PathBuf},
   str::FromStr,
 };
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(default)]
 pub struct Config {
   pub main: MainConfig,
   pub colors: ColorConfig,
@@ -59,9 +61,75 @@ pub struct MainConfig {
 
   /// Should we display empty columns?
   display_empty_cols: bool,
+
+  /// Maximum number of warping lines of task description before breaking it (and adding the ellipsis character).
+  max_description_lines: usize,
+}
+
+impl Default for MainConfig {
+  fn default() -> Self {
+    Self {
+      tasks_file: dirs::config_dir().unwrap().join("toodoux"),
+      todo_alias: "TODO".to_owned(),
+      wip_alias: "WIP".to_owned(),
+      done_alias: "DONE".to_owned(),
+      cancelled_alias: "CANCELLED".to_owned(),
+      uid_col_name: "UID".to_owned(),
+      age_col_name: "Age".to_owned(),
+      spent_col_name: "Spent".to_owned(),
+      prio_col_name: "Prio".to_owned(),
+      project_col_name: "Project".to_owned(),
+      status_col_name: "Status".to_owned(),
+      description_col_name: "Description".to_owned(),
+      display_empty_cols: false,
+      max_description_lines: 2,
+    }
+  }
+}
+
+impl MainConfig {
+  #[allow(dead_code)]
+  pub fn new(
+    tasks_file: impl Into<PathBuf>,
+    todo_alias: impl Into<String>,
+    wip_alias: impl Into<String>,
+    done_alias: impl Into<String>,
+    cancelled_alias: impl Into<String>,
+    uid_col_name: impl Into<String>,
+    age_col_name: impl Into<String>,
+    spent_col_name: impl Into<String>,
+    prio_col_name: impl Into<String>,
+    project_col_name: impl Into<String>,
+    status_col_name: impl Into<String>,
+    description_col_name: impl Into<String>,
+    display_empty_cols: bool,
+    max_description_lines: usize,
+  ) -> Self {
+    Self {
+      tasks_file: tasks_file.into(),
+      todo_alias: todo_alias.into(),
+      wip_alias: wip_alias.into(),
+      done_alias: done_alias.into(),
+      cancelled_alias: cancelled_alias.into(),
+      uid_col_name: uid_col_name.into(),
+      age_col_name: age_col_name.into(),
+      spent_col_name: spent_col_name.into(),
+      prio_col_name: prio_col_name.into(),
+      project_col_name: project_col_name.into(),
+      status_col_name: status_col_name.into(),
+      description_col_name: description_col_name.into(),
+      display_empty_cols,
+      max_description_lines,
+    }
+  }
 }
 
 impl Config {
+  #[allow(dead_code)]
+  pub fn new(main: MainConfig, colors: ColorConfig) -> Self {
+    Config { main, colors }
+  }
+
   fn get_config_path() -> Result<PathBuf, Box<dyn Error>> {
     log::trace!("getting configuration root path from the environment");
     let home = dirs::config_dir().ok_or("cannot find configuration directory")?;
@@ -143,47 +211,28 @@ impl Config {
     self.main.display_empty_cols
   }
 
+  pub fn max_description_lines(&self) -> usize {
+    self.main.max_description_lines
+  }
+
   pub fn get() -> Result<Option<Self>, Box<dyn Error>> {
     let path = Self::get_config_path()?;
     Self::from_dir(path)
   }
 
   pub fn create(path: Option<&Path>) -> Option<Self> {
+    let default_config = Self::default();
     let tasks_file = path
       .map(|p| p.to_owned())
       .or(Self::get_config_path().ok())?;
-    let todo_alias = "TODO".to_owned();
-    let wip_alias = "WIP".to_owned();
-    let done_alias = "DONE".to_owned();
-    let cancelled_alias = "CANCELLED".to_owned();
-    let uid_col_name = "UID".to_owned();
-    let age_col_name = "Age".to_owned();
-    let spent_col_name = "Spent".to_owned();
-    let prio_col_name = "Prio".to_owned();
-    let project_col_name = "Project".to_owned();
-    let status_col_name = "Status".to_owned();
-    let description_col_name = "Description".to_owned();
-    let display_empty_cols = false;
 
     let main = MainConfig {
       tasks_file,
-      todo_alias,
-      wip_alias,
-      done_alias,
-      cancelled_alias,
-      uid_col_name,
-      age_col_name,
-      spent_col_name,
-      prio_col_name,
-      project_col_name,
-      status_col_name,
-      description_col_name,
-      display_empty_cols,
+      ..default_config.main
     };
-
-    let config = Config {
+    let config = Self {
       main,
-      colors: Default::default(),
+      ..default_config
     };
 
     log::trace!("creating new configuration:\n{:#?}", config);
@@ -232,10 +281,12 @@ impl StyleAttribute {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(default)]
 pub struct ColorConfig {
   pub description: TaskDescriptionColorConfig,
   pub status: TaskStatusColorConfig,
   pub priority: PriorityColorConfig,
+  pub show_header: ShowHeaderColorConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -343,6 +394,27 @@ impl Default for PriorityColorConfig {
   }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ShowHeaderColorConfig(Highlight);
+
+impl Default for ShowHeaderColorConfig {
+  fn default() -> Self {
+    Self(Highlight {
+      foreground: Some(Color(Col::BrightBlack)),
+      background: None,
+      style: vec![],
+    })
+  }
+}
+
+impl Deref for ShowHeaderColorConfig {
+  type Target = Highlight;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
 /// Highlight definition.
 ///
 /// Contains foreground and background colors as well as the style to use.
@@ -387,13 +459,6 @@ impl Highlight {
 /// Highlighted string — i.e. all color information and styles have been applied.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HighlightedString(ColoredString);
-
-impl HighlightedString {
-  /// Wrap a regular string that is not highlighted.
-  pub fn regular(s: impl AsRef<str>) -> Self {
-    HighlightedString(s.as_ref().into())
-  }
-}
 
 impl fmt::Display for HighlightedString {
   fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {

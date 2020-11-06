@@ -1,5 +1,6 @@
 //! Metadata available to users for filtering / creating tasks.
 
+use colored::Colorize as _;
 use serde::{Deserialize, Serialize};
 use std::{
   error::Error,
@@ -108,6 +109,15 @@ impl Metadata {
 
     (metadata, output.join(" "))
   }
+
+  /// Return a “filter-like” representation of this metadata.
+  pub fn filter_like(&self) -> impl Display {
+    match *self {
+      Metadata::Project(ref p) => format!("@{}", p).magenta(),
+      Metadata::Priority(ref p) => format!("+{:?}", p).yellow(),
+      Metadata::Tag(ref t) => format!("#{}", t).green(),
+    }
+  }
 }
 
 impl FromStr for Metadata {
@@ -120,21 +130,21 @@ impl FromStr for Metadata {
     }
 
     match s.as_bytes()[0] {
-      b'@' => Ok(Metadata::Project(s[1..].to_owned())),
+      b'@' => Ok(Metadata::project(&s[1..])),
       b'+' => {
         if len == 2 {
           match s.as_bytes()[1] {
-            b'l' => Ok(Metadata::Priority(Priority::Low)),
-            b'm' => Ok(Metadata::Priority(Priority::Medium)),
-            b'h' => Ok(Metadata::Priority(Priority::High)),
-            b'c' => Ok(Metadata::Priority(Priority::Critical)),
+            b'l' => Ok(Metadata::priority(Priority::Low)),
+            b'm' => Ok(Metadata::priority(Priority::Medium)),
+            b'h' => Ok(Metadata::priority(Priority::High)),
+            b'c' => Ok(Metadata::priority(Priority::Critical)),
             _ => Err(MetadataParsingError::UnknownPriority),
           }
         } else {
           Err(MetadataParsingError::UnknownPriority)
         }
       }
-      b'#' => Ok(Metadata::Tag(s[1..].to_owned())),
+      b'#' => Ok(Metadata::tag(&s[1..])),
       _ => Err(MetadataParsingError::Unknown(s.to_owned())),
     }
   }
@@ -163,14 +173,11 @@ mod unit_tests {
 
   #[test]
   fn project() {
-    assert_eq!(
-      "@foo".parse::<Metadata>(),
-      Ok(Metadata::Project("foo".to_owned()))
-    );
+    assert_eq!("@foo".parse::<Metadata>(), Ok(Metadata::project("foo")));
 
     assert_eq!(
       "@foo bar".parse::<Metadata>(),
-      Ok(Metadata::Project("foo bar".to_owned()))
+      Ok(Metadata::project("foo bar"))
     );
 
     assert_eq!(
@@ -181,15 +188,9 @@ mod unit_tests {
 
   #[test]
   fn tag() {
-    assert_eq!(
-      "#foo".parse::<Metadata>(),
-      Ok(Metadata::Tag("foo".to_owned()))
-    );
+    assert_eq!("#foo".parse::<Metadata>(), Ok(Metadata::tag("foo")));
 
-    assert_eq!(
-      "#foo bar".parse::<Metadata>(),
-      Ok(Metadata::Tag("foo bar".to_owned()))
-    );
+    assert_eq!("#foo bar".parse::<Metadata>(), Ok(Metadata::tag("foo bar")));
 
     assert_eq!(
       "#".parse::<Metadata>(),

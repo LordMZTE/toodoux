@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use std::{collections::HashMap, error::Error, fmt, fs, str::FromStr};
+use unicase::UniCase;
 
 /// Create, edit, remove and list tasks.
 #[derive(Debug, Deserialize, Serialize)]
@@ -67,20 +68,17 @@ impl TaskManager {
 pub struct Task {
   /// Name of the task.
   name: String,
-  /// Optional list of labels.
-  labels: Vec<String>,
   /// Event history.
   history: Vec<Event>,
 }
 
 impl Task {
   /// Create a new [`Task`] and populate automatically its history with creation date and status.
-  pub fn new(name: impl Into<String>, labels: impl Into<Vec<String>>) -> Self {
+  pub fn new(name: impl Into<String>) -> Self {
     let date = Utc::now();
 
     Task {
       name: name.into(),
-      labels: labels.into(),
       history: vec![
         Event::Created(date),
         Event::StatusChanged {
@@ -145,9 +143,12 @@ impl Task {
   }
 
   /// Iterate over the notes, if any.
-  pub fn notes(&self) -> impl Iterator<Item = &str> {
+  pub fn notes(&self) -> impl Iterator<Item = (&DateTime<Utc>, &str)> {
     self.history.iter().filter_map(|event| match event {
-      Event::NoteAdded { ref note, .. } => Some(note.as_str()),
+      Event::NoteAdded {
+        ref event_date,
+        ref note,
+      } => Some((event_date, note.as_str())),
       _ => None,
     })
   }
@@ -218,6 +219,29 @@ impl Task {
         Metadata::Priority(priority) => self.set_priority(priority),
         Metadata::Tag(tag) => self.add_tag(tag),
       }
+    }
+  }
+
+  /// Check all metadata against this I have no idea how to express the end of this sentence so good luck.
+  pub fn check_metadata<'a>(
+    &self,
+    metadata: impl IntoIterator<Item = &'a Metadata>,
+    case_insensitive: bool,
+  ) -> bool {
+    if case_insensitive {
+      let own_project = self.project().map(UniCase::new);
+      let own_tags = self.tags().map(UniCase::new).collect::<Vec<_>>();
+      metadata.into_iter().all(|md| match md {
+        Metadata::Project(ref project) => own_project == Some(UniCase::new(project)),
+        Metadata::Priority(priority) => self.priority() == Some(*priority),
+        Metadata::Tag(ref tag) => own_tags.contains(&UniCase::new(tag)),
+      })
+    } else {
+      metadata.into_iter().all(|md| match md {
+        Metadata::Project(ref project) => self.project() == Some(project),
+        Metadata::Priority(priority) => self.priority() == Some(*priority),
+        Metadata::Tag(ref tag) => self.tags().any(|t| t == tag),
+      })
     }
   }
 
